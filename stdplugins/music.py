@@ -7,14 +7,14 @@ import asyncio
 from uniborg.util import admin_cmd
 
 
-@borg.on(admin_cmd(pattern="music ?(.*)"))
+@borg.on(admin_cmd(pattern="song ?(.*)"))
 async def _(event):
     if event.fwd_from:
         return
     name = event.pattern_match.group(1)
     chat = "@SpotifyMusicDownloaderBot"
     await event.edit("```Getting Your Music```")
-    async with bot.conversation(chat) as conv:
+    async with borg.conversation(chat) as conv:
           await asyncio.sleep(2)
           await event.edit("`Downloading Music \nIt may take some time\n   So Stay Tuned.....`")
           try:
