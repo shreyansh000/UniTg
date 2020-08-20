@@ -30,6 +30,21 @@ def admin_cmd(pattern=None, allow_sudo=True, **args):
     args["chats"] = list(Config.UB_BLACK_LIST_CHAT)
     return events.NewMessage(**args)
 
+async def is_admin(client, chat_id, user_id):
+    if not str(chat_id).startswith("-100"):
+        return False
+    try:
+        req_jo = await client(GetParticipantRequest(
+            channel=chat_id,
+            user_id=user_id
+        ))
+        chat_participant = req_jo.participant
+        if isinstance(chat_participant, (ChannelParticipantCreator, ChannelParticipantAdmin)):
+            return True
+    except Exception:
+        return False
+    else:
+        return False
 
 async def is_read(borg, entity, message, is_out=None):
     """
