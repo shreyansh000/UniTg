@@ -1,104 +1,262 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-"""Snips
-Available Commands:
-.snips
-.snipl
-.snipd"""
-from telethon import events, utils
-from telethon.tl import types
-from sql_helpers.snips_sql import get_snips, add_snip, remove_snip, get_all_snips
-from uniborg.util import admin_cmd
+"""Default Permission in Telegram 5.0.1
+Available Commands: .lock <option>, .unlock <option>, .locks
+API Options: msg, media, sticker, gif, gamee, ainline, gpoll, adduser, cpin, changeinfo
+DB Options: bots, commands, email, forward, url"""
+
+from telethon import events, functions, types
+from uniborg.util import admin_cmd, is_admin
 
 
-TYPE_TEXT = 0
-TYPE_PHOTO = 1
-TYPE_DOCUMENT = 2
-
-
-@borg.on(events.NewMessage(pattern=r'\#(\S+)', outgoing=True))
-async def on_snip(event):
-    name = event.pattern_match.group(1)
-    snip = get_snips(name)
-    if snip:
-        if snip.snip_type == TYPE_PHOTO:
-            media = types.InputPhoto(
-                int(snip.media_id),
-                int(snip.media_access_hash),
-                snip.media_file_reference
-            )
-        elif snip.snip_type == TYPE_DOCUMENT:
-            media = types.InputDocument(
-                int(snip.media_id),
-                int(snip.media_access_hash),
-                snip.media_file_reference
-            )
-        else:
-            media = None
-        message_id = event.message.id
-        if event.reply_to_msg_id:
-            message_id = event.reply_to_msg_id
-        await borg.send_message(
-            event.chat_id,
-            snip.reply,
-            reply_to=message_id,
-            file=media
+@borg.on(admin_cmd(pattern="lock( (?P<target>\S+)|$)"))
+async def _(event):
+     # Space weirdness in regex required because argument is optional and other
+     # commands start with ".lock"
+    if event.fwd_from:
+        return
+    input_str = event.pattern_match.group("target")
+    peer_id = event.chat_id
+    if input_str in (("bots", "commands", "email", "forward", "url")):
+        try:
+            from sql_helpers.locks_sql import update_lock
+        except Exception as e:
+            logger.info("DB_URI is not configured.")
+            logger.info(str(e))
+            return False
+        update_lock(peer_id, input_str, True)
+        await event.edit(
+            "Locked {}".format(input_str)
         )
-        await event.delete()
-
-
-@borg.on(admin_cmd("snips (.*)"))
-async def on_snip_save(event):
-    name = event.pattern_match.group(1)
-    msg = await event.get_reply_message()
-    if msg:
-        snip = {'type': TYPE_TEXT, 'text': msg.message or ''}
-        if msg.media:
-            media = None
-            if isinstance(msg.media, types.MessageMediaPhoto):
-                media = utils.get_input_photo(msg.media.photo)
-                snip['type'] = TYPE_PHOTO
-            elif isinstance(msg.media, types.MessageMediaDocument):
-                media = utils.get_input_document(msg.media.document)
-                snip['type'] = TYPE_DOCUMENT
-            if media:
-                snip['id'] = media.id
-                snip['hash'] = media.access_hash
-                snip['fr'] = media.file_reference
-        add_snip(name, snip['text'], snip['type'], snip.get('id'), snip.get('hash'), snip.get('fr'))
-        await event.edit("snip {name} saved successfully. Get it with #{name}".format(name=name))
     else:
-        await event.edit("Reply to a message with `snips keyword` to save the snip")
-
-
-@borg.on(admin_cmd("snipl"))
-async def on_snip_list(event):
-    all_snips = get_all_snips()
-    OUT_STR = "Available Snips:\n"
-    if len(all_snips) > 0:
-        for a_snip in all_snips:
-            OUT_STR += f"👉 #{a_snip.snip} \n"
-    else:
-        OUT_STR = "No Snips. Start Saving using `.snips`"
-    if len(OUT_STR) > Config.MAX_MESSAGE_SIZE_LIMIT:
-        with io.BytesIO(str.encode(OUT_STR)) as out_file:
-            out_file.name = "snips.text"
-            await event.client.send_file(
-                event.chat_id,
-                out_file,
-                force_document=True,
-                allow_cache=False,
-                caption="Available Snips",
-                reply_to=event
+        msg = None
+        media = None
+        sticker = None
+        gif = None
+        gamee = None
+        ainline = None
+        gpoll = None
+        adduser = None
+        cpin = None
+        changeinfo = None
+        if input_str:
+            if "msg" in input_str:
+                msg = True
+            if "media" in input_str:
+                media = True
+            if "sticker" in input_str:
+                sticker = True
+            if "gif" in input_str:
+                gif = True
+            if "gamee" in input_str:
+                gamee = True
+            if "ainline" in input_str:
+                ainline = True
+            if "gpoll" in input_str:
+                gpoll = True
+            if "adduser" in input_str:
+                adduser = True
+            if "cpin" in input_str:
+                cpin = True
+            if "changeinfo" in input_str:
+                changeinfo = True
+        banned_rights = types.ChatBannedRights(
+            until_date=None,
+            # view_messages=None,
+            send_messages=msg,
+            send_media=media,
+            send_stickers=sticker,
+            send_gifs=gif,
+            send_games=gamee,
+            send_inline=ainline,
+            send_polls=gpoll,
+            invite_users=adduser,
+            pin_messages=cpin,
+            change_info=changeinfo,
+        )
+        try:
+            result = await event.client(
+                functions.messages.EditChatDefaultBannedRightsRequest(
+                    peer=peer_id,
+                    banned_rights=banned_rights
+                )
             )
-            await event.delete()
+        except Exception as e:  # pylint:disable=C0103,W0703
+            await event.edit(str(e))
+        else:
+            await event.edit(
+                "Current Chat Default Permissions Changed Successfully, in API"
+            )
+
+
+@borg.on(admin_cmd(pattern="unlock ?(.*)"))
+async def _(event):
+    if event.fwd_from:
+        return
+    try:
+        from sql_helpers.locks_sql import update_lock
+    except Exception as e:
+        logger.info("DB_URI is not configured.")
+        logger.info(str(e))
+        return False
+    input_str = event.pattern_match.group(1)
+    peer_id = event.chat_id
+    if input_str in (("bots", "commands", "email", "forward", "url")):
+        update_lock(peer_id, input_str, False)
+        await event.edit(
+            "UnLocked {}".format(input_str)
+        )
     else:
-        await event.edit(OUT_STR)
+        await event.edit(
+            "Use `.lock` without any parameters to unlock API locks"
+        )
 
 
-@borg.on(admin_cmd("snipd (\S+)"))
-async def on_snip_delete(event):
-    name = event.pattern_match.group(1)
-    remove_snip(name)
-    await event.edit("snip #{} deleted successfully".format(name))
+@borg.on(admin_cmd(pattern="curenabledlocks"))
+async def _(event):
+    if event.fwd_from:
+        return
+    try:
+        from sql_helpers.locks_sql import get_locks
+    except Exception as e:
+        logger.info("DB_URI is not configured.")
+        logger.info(str(e))
+        return False
+    res = ""
+    current_db_locks = get_locks(event.chat_id)
+    if not current_db_locks:
+        res = "There are no DataBase locks in this chat"
+    else:
+        res = "Following are the DataBase locks in this chat: \n"
+        res += "👉 `bots`: `{}`\n".format(current_db_locks.bots)
+        res += "👉 `commands`: `{}`\n".format(current_db_locks.commands)
+        res += "👉 `email`: `{}`\n".format(current_db_locks.email)
+        res += "👉 `forward`: `{}`\n".format(current_db_locks.forward)
+        res += "👉 `url`: `{}`\n".format(current_db_locks.url)
+    current_chat = await event.get_chat()
+    try:
+        current_api_locks = current_chat.default_banned_rights
+    except AttributeError as e:
+        logger.info(str(e))
+    else:
+        res += "\nFollowing are the API locks in this chat: \n"
+        res += "👉 `msg`: `{}`\n".format(current_api_locks.send_messages)
+        res += "👉 `media`: `{}`\n".format(current_api_locks.send_media)
+        res += "👉 `sticker`: `{}`\n".format(current_api_locks.send_stickers)
+        res += "👉 `gif`: `{}`\n".format(current_api_locks.send_gifs)
+        res += "👉 `gamee`: `{}`\n".format(current_api_locks.send_games)
+        res += "👉 `ainline`: `{}`\n".format(current_api_locks.send_inline)
+        res += "👉 `gpoll`: `{}`\n".format(current_api_locks.send_polls)
+        res += "👉 `adduser`: `{}`\n".format(current_api_locks.invite_users)
+        res += "👉 `cpin`: `{}`\n".format(current_api_locks.pin_messages)
+        res += "👉 `changeinfo`: `{}`\n".format(current_api_locks.change_info)
+    await event.edit(res)
+
+
+@borg.on(events.MessageEdited())  # pylint:disable=E0602
+@borg.on(events.NewMessage())  # pylint:disable=E0602
+async def check_incoming_messages(event):
+    try:
+        from sql_helpers.locks_sql import update_lock, is_locked
+    except Exception as e:
+        logger.info("DB_URI is not configured.")
+        logger.info(str(e))
+        return False
+    if await is_admin(event.client, event.chat_id, event.from_id):
+        return
+    peer_id = event.chat_id
+    if is_locked(peer_id, "commands"):
+        entities = event.message.entities
+        is_command = False
+        if entities:
+            for entity in entities:
+                if isinstance(entity, types.MessageEntityBotCommand):
+                    is_command = True
+        if is_command:
+            try:
+                await event.delete()
+            except Exception as e:
+                await event.reply(
+                    "I don't seem to have ADMIN permission here. \n`{}`".format(str(e))
+                )
+                update_lock(peer_id, "commands", False)
+    if is_locked(peer_id, "forward"):
+        if event.fwd_from:
+            try:
+                await event.delete()
+            except Exception as e:
+                await event.reply(
+                    "I don't seem to have ADMIN permission here. \n`{}`".format(str(e))
+                )
+                update_lock(peer_id, "forward", False)
+    if is_locked(peer_id, "email"):
+        entities = event.message.entities
+        is_email = False
+        if entities:
+            for entity in entities:
+                if isinstance(entity, types.MessageEntityEmail):
+                    is_email = True
+        if is_email:
+            try:
+                await event.delete()
+            except Exception as e:
+                await event.reply(
+                    "I don't seem to have ADMIN permission here. \n`{}`".format(str(e))
+                )
+                update_lock(peer_id, "email", False)
+    if is_locked(peer_id, "url"):
+        entities = event.message.entities
+        is_url = False
+        if entities:
+            for entity in entities:
+                if isinstance(entity, (types.MessageEntityTextUrl, types.MessageEntityUrl)):
+                    is_url = True
+        if is_url:
+            try:
+                await event.delete()
+            except Exception as e:
+                await event.reply(
+                    "I don't seem to have ADMIN permission here. \n`{}`".format(str(e))
+                )
+                update_lock(peer_id, "url", False)
+
+
+@borg.on(events.ChatAction())  # pylint:disable=E0602
+async def _(event):
+    try:
+        from sql_helpers.locks_sql import update_lock, is_locked
+    except Exception as e:
+        logger.info("DB_URI is not configured.")
+        logger.info(str(e))
+        return False
+    if await is_admin(event.client, event.chat_id, event.action_message.from_id):
+        return
+    if is_locked(event.chat_id, "bots"):
+        # bots are limited Telegram accounts,
+        # and cannot join by themselves
+        if event.user_added:
+            users_added_by = event.action_message.from_id
+            is_ban_able = False
+            rights = types.ChatBannedRights(
+                until_date=None,
+                view_messages=True
+            )
+            added_users = event.action_message.action.users
+            for user_id in added_users:
+                user_obj = await event.client.get_entity(user_id)
+                if user_obj.bot:
+                    is_ban_able = True
+                    try:
+                        await event.client(functions.channels.EditBannedRequest(
+                            event.chat_id,
+                            user_obj,
+                            rights
+                        ))
+                    except Exception as e:
+                        await event.reply(
+                            "I don't seem to have ADMIN permission here. \n`{}`".format(str(e))
+                        )
+                        update_lock(event.chat_id, "bots", False)
+                        break
+            if Config.G_BAN_LOGGER_GROUP is not None and is_ban_able:
+                ban_reason_msg = await event.reply(
+                    "!warn [user](tg://user?id={}) Please Do Not Add BOTs to this chat.".format(users_added_by)
+                )
